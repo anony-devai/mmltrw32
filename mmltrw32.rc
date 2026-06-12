@@ -1,0 +1,80 @@
+//mmltr32w.rc
+#include <windows.h>
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+// メインダイアログ（レイアウト再構成版）
+
+IDD_MAIN_DIALOG DIALOGEX 0, 0, 120, 40
+STYLE DS_CENTER | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+//MENU IDR_MAINMENU
+CAPTION "MML Transposer"
+FONT 9, "MS ゴシック"
+BEGIN
+        // --- ファイル名表示 ---
+        LTEXT "No file selected", IDC_STATIC_FILENAME,
+                3, 1, 112, 7, SS_LEFTNOWORDWRAP | SS_NOTIFY
+
+        // --- Shift スライダー ---
+        CONTROL "", IDC_SLIDER_SHIFT, "msctls_trackbar32",
+                TBS_AUTOTICKS | TBS_BOTTOM | WS_TABSTOP,
+                0, 8, 120, 9
+
+        // --- Shift / Spin / Auto Save ---
+        LTEXT "Key:", IDC_STATIC_KEY, 3, 20, 14, 7, SS_NOTIFY
+
+        EDITTEXT IDC_EDIT_SHIFT, 19, 19, 28, 10,
+                ES_NUMBER | ES_READONLY | WS_TABSTOP
+
+        CONTROL "", IDC_SPIN_SHIFT, "msctls_updown32",
+                UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_AUTOBUDDY | WS_TABSTOP,
+                0, 19, 10, 10
+
+        PUSHBUTTON "Quick", IDC_BUTTON_SAVE_AUTO,
+                41, 19, 25, 10
+
+        PUSHBUTTON "Save", IDC_BUTTON_SAVE_AS,
+                68, 19, 25, 10
+
+        CONTROL "Auto", IDC_CHECK_AUTOSAVE, "Button",
+                BS_AUTOCHECKBOX | WS_TABSTOP,
+                95, 20, 22, 8
+
+        // --- Option / FORMAT / Rel / Abs / D-ch ---
+        LTEXT "Option:", IDC_STATIC_OPTION, 3, 31, 26, 7, SS_NOTIFY
+
+        CONTROL "FMT", IDC_CHECK_FORMAT, "Button",
+                BS_AUTOCHECKBOX | WS_TABSTOP,
+                29, 31, 20, 8
+
+        CONTROL "Rel", IDC_CHECK_REL, "Button",
+                BS_AUTOCHECKBOX | WS_TABSTOP,
+                51, 31, 20, 8
+
+        CONTROL "Abs", IDC_CHECK_ABS, "Button",
+                BS_AUTOCHECKBOX | WS_TABSTOP,
+                73, 31, 20, 8
+
+        CONTROL "D-ch", IDC_CHECK_DSHIFT, "Button",
+                BS_AUTOCHECKBOX | WS_TABSTOP,
+                95, 31, 22, 8
+
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// メニュー（コメントのまま残す）
+/////////////////////////////////////////////////////////////////////////////
+
+/*
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open...", IDM_FILE_OPEN
+        MENUITEM "&Save", IDM_FILE_SAVE
+        MENUITEM "Save &As...", IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", IDM_FILE_EXIT
+    END
+END
+*/
