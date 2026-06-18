@@ -1,4 +1,4 @@
-//mmltr32w.rc
+//mmltrw32.rc
 #include <windows.h>
 #include "resource.h"
 
