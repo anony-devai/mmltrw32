@@ -1,54 +1,76 @@
 /* ============================================================
- * mmleng32.h  (C89/BCC55/DOS 8.3 準拠 完全クリーン版)
+ * mmleng32.h  (32-bit Common MML Transposer Engine Interface)
+ *
+ * Header for the 32-bit implementation of the shared MML Transposer Engine,
+ * used by:
+ *      - mmltrw32  (Win32 GUI front-end)
+ *      - mmltrc32  (Win32 console front-end)
+ *
+ * Provides:
+ *      - Buffer limit definitions
+ *      - Error code definitions
+ *      - Mode bit layout (3-bit base + D-channel extension)
+ *      - Token and error information structures
+ *      - Public API entry point (mml_process)
+ *
+ * Fully synchronized with the 16-bit engine design.
+ * The 32-bit engine cannot run in 16-bit environments.
  * ============================================================ */
 
 #ifndef MMLENG32_H_INCLUDED
 #define MMLENG32_H_INCLUDED
 
 /* ------------------------------------------------------------
- * 各種バッファ制限マクロ (MAX_TEXT を完全に復活)
+ * Buffer limits (MAX_TEXT fully restored)
  * ------------------------------------------------------------ */
 #define MAX_TOKENS   16384
-#define MAX_RAW_LEN  256    /* 既存の 256 バイト仕様を維持 */
+#define MAX_RAW_LEN  256    /* Keep existing 256-byte RAW buffer */
 #define MAX_OUT      65536
-#define MAX_TEXT     65536  /* CUI側で必要となるため完全復活 */
+#define MAX_TEXT     65536  /* Required by CUI side, fully restored */
 
-/* 最大チャンネル数: 28 
- * (大文字 A-Z = 26) + (小文字 a, b = 2) 
+/* Maximum number of channels: 28
+ * (Uppercase A-Z = 26) + (lowercase a, b = 2)
  */
 #define MAX_CHANNELS 28
 
 /* ------------------------------------------------------------
- * エラーコード定義（共通の割り当てを完全維持）
+ * Error codes (shared allocation, kept exactly as before)
  * ------------------------------------------------------------ */
-#define MML_ERR_NULL_INPUT             -1  /* 入力/出力ポインタがNULL */
-#define MML_ERR_EMPTY_INPUT            -2  /* 入力文字列が空 */
-#define MML_ERR_OUTBUF                 -3  /* 出力バッファサイズが不正(0以下) */
-#define MML_ERR_BAD_SHIFT              -4  /* 移調幅が範囲外 (-12?12 以外) */
-#define MML_ERR_BAD_MODE               -5  /* モード指定が範囲外 */
-#define MML_ERR_PARSE                  -6  /* パースエラー（32bit Token版で使用） */
-#define MML_ERR_OCTAVE_OUT_OF_RANGE  -10  /* 移調により各音源のオクターブ限界を突破した */
+#define MML_ERR_NULL_INPUT             -1  /* Input/output pointer is NULL */
+#define MML_ERR_EMPTY_INPUT            -2  /* Input string is empty */
+#define MML_ERR_OUTBUF                 -3  /* Output buffer size invalid (<= 0) */
+#define MML_ERR_BAD_SHIFT              -4  /* Shift value out of range (-12?`12 only) */
+#define MML_ERR_BAD_MODE               -5  /* Mode value out of range */
+#define MML_ERR_PARSE                  -6  /* Parse error (used by 32-bit token version) */
+#define MML_ERR_OCTAVE_OUT_OF_RANGE   -10  /* Transposition exceeded octave limit of sound source */
 
 /* ------------------------------------------------------------
- * モード体系（基本3bit体系に、Dch独立制御ビットを4ビット目に拡張）
+ * Mode bit layout
+ * ------------------------------------------------------------
+ * Base 3-bit mode:
+ *   bit 2 (4) : FMT  ?c formatting on/off
+ *   bit 1 (2) : REL  ?c relative notation (< >)
+ *   bit 0 (1) : ABS  ?c absolute notation (oX)
+ *
+ * 4th bit is used as an independent D-channel (noise) control.
  * ------------------------------------------------------------ */
-#define MODE_PURE        0   /* 0000 : Pure（整形なし・oX/<> 振り直し） */
-#define MODE_PURE_ABS    1   /* 0001 : Pure + Abs（整形なし） */
-#define MODE_PURE_REL    2   /* 0010 : Pure + Rel（整形なし） */
-#define MODE_FMT         4   /* 0100 : FMT（整形あり・oX/<> 振り直し） */
-#define MODE_FMT_ABS     5   /* 0101 : FMT + Abs（整形あり） */
-#define MODE_FMT_REL     6   /* 0110 : FMT + Rel（整形あり） */
+#define MODE_PURE        0   /* 0000 : Pure (no formatting, reassign oX / <>) */
+#define MODE_PURE_ABS    1   /* 0001 : Pure + Abs (no formatting) */
+#define MODE_PURE_REL    2   /* 0010 : Pure + Rel (no formatting) */
+#define MODE_FMT         4   /* 0100 : FMT (formatting, reassign oX / <>) */
+#define MODE_FMT_ABS     5   /* 0101 : FMT + Abs (with formatting) */
+#define MODE_FMT_REL     6   /* 0110 : FMT + Rel (with formatting) */
 
-/* 【拡張フラグ】Dチャンネル（ノイズ）音符シフト有効化フラグ (-d オプション用) 
- * 既存の各モード（0?6）に対してビット論理和（| MODE_NOISE_SHIFT）で併用可能。
+/* Extended flag: D-channel (noise) note shift enable flag (-d option)
+ * This flag can be OR-ed with any base mode (0?`6).
  */
-#define MODE_NOISE_SHIFT 8   /* 1000 : Dchのみ音符をシフトし、o0固定とする */
+#define MODE_NOISE_SHIFT 8   /* 1000 : Shift notes only on D-channel, keep o0 fixed */
 
 /* ------------------------------------------------------------
- * 構造体および列挙型定義
+ * Structures and enums
  * ------------------------------------------------------------ */
 
-/* トークン種別（既存の列挙型を完全維持） */
+/* Token type (kept exactly as in the original enum) */
 typedef enum {
     TK_NONE = 0,
     TK_NOTE,
@@ -56,36 +78,49 @@ typedef enum {
     TK_RAW
 } MMLTokenType;
 
-/* エラー詳細情報（新設：限界突破時の詳細用） */
+/* Detailed error information (for octave limit violations, etc.) */
 typedef struct {
-    int  error_code;       /* エラーコード (MML_ERR_xxx) */
-    char channel_char;     /* エラーが発生したチャンネル文字 (A-Z, a, b) */
-    int  line_number;      /* エラーが発生したMMLの行番号 (1から開始) */
-    int  calculated_value; /* 限界突破した際の、計算上の不正なオクターブ値 */
+    int  error_code;       /* Error code (MML_ERR_xxx) */
+    char channel_char;     /* Channel character where error occurred (A-Z, a, b) */
+    int  line_number;      /* MML line number where error occurred (1-based) */
+    int  calculated_value; /* Invalid octave value calculated when limit was exceeded */
 } MMLErrorInfo;
 
-/* トークン情報（既存のメンバを完全維持＋安全性のための拡張） */
+/* Token information (original members preserved, with safety-oriented comments) */
 typedef struct {
     MMLTokenType type;
-    int  octave;            /* NOTE/REST 用の絶対オクターブ */
-    int  note;              /* 0?11, REST のときは -1 */
-    char length[16];        /* 音長文字列（"4", "8.", "16" など。余裕を見て16面確保） */
-    char raw[MAX_RAW_LEN];  /* 生テキスト（内部 RAW） */
-    int  is_literal_o0;     /* o0 をそのまま残すかどうかのフラグ */
-    int  is_raw_ox;         /* oX を RAW として扱うかどうかのフラグ */
-    int  is_comment;        /* コメント由来トークンかどうかのフラグ */
+    int  octave;                 /* Absolute octave for NOTE/REST */
+    int  note;                   /* 0?`11, or -1 for REST */
+    char length[16];             /* Length string ("4", "8.", "16", etc.; 16 bytes reserved) */
+    char raw[MAX_RAW_LEN];       /* Raw text (internal RAW) */
+    int  is_literal_o0;          /* Whether to keep o0 literally as-is */
+    int  is_raw_ox;              /* Whether to treat oX as RAW */
+    int  is_comment;             /* Whether this token came from a comment */
 } Token;
 
 /* ------------------------------------------------------------
- * 外部公開関数 API
+ * Public API
  * ------------------------------------------------------------ */
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * MML一括変換メインエントリー
- * (第3引数 mode に対して、0?6 に加え、オプション時に +8 された値を受け入れます)
+ * Main MML batch conversion entry point.
+ *
+ * Parameters:
+ *   in_text   - Input MML text (null-terminated)
+ *   shift     - Semitone shift (-12?`12)
+ *   mode      - Mode bitmask:
+ *                 base: 0?`6
+ *                 plus: +8 when D-channel noise shift is enabled
+ *   outbuf    - Output buffer
+ *   outsize   - Size of output buffer in bytes
+ *   err_info  - Optional pointer to receive detailed error info
+ *
+ * Returns:
+ *   >= 0 : Length of output text (in bytes, excluding terminator)
+ *   <  0 : Error code (MML_ERR_xxx)
  */
 int mml_process(const char* in_text, int shift, int mode,
                 char* outbuf, int outsize, MMLErrorInfo* err_info);
