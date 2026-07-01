@@ -1,94 +1,120 @@
-# MML Transposer Win32 GUI (MMLTRW32)
+# **MML Transposer Win32 GUI (MMLTRW32)**
 
-NSF 用 MML ファイル移調ツール「MML Transposer」の  
-Win32 アプリケーション版です。
+A Win32 application edition of the MML Transposer tool.  
+It transposes plain‑text MML source files used in NSF (NES Sound Format) music creation.  
+This program does not process NSF data directly.
 
-## 対応環境
-
-- Windows 95 以降の Win32 GUI 環境  
-- Windows 7 / 10 でも動作確認済み（互換モード不要）
-
-## エンジン構成
-
-- 32bit 版エンジン `mmleng32.c` を使用しています。
-
-## 使い方（基本操作）
-
-MMLTRW32 は、以下の流れで操作します。
-
-1. **Shift（移調量）をスライダで設定**  
-   - 何も操作しなければ 0（移調なし）  
-   - 数値は左側の `Key:` 表示に反映されます
-
-2. **各種オプションをチェックボックスで選択**  
-   - `FMT`  … 整形あり（OFF の場合は Pure＝整形なし）  
-   - `Rel`  … 相対音域  
-   - `Abs`  … 絶対音域  
-   - `D-ch` … D チャンネル移調  
-
-   ※ `Rel` と `Abs` は排他です。<br>
-   　 どちらも OFF の場合は、音域指定を行わず必要に応じて oX / <> を自動調整します。
-
-3. **MML ファイルをウィンドウへドラッグ＆ドロップ**  
-   - Auto が ON の場合 → 自動で変換して保存  
-   - Auto が OFF の場合 → Quick / Save ボタンが有効化されます
+This edition uses the same 32‑bit engine `mmleng32.c` as the Win32 CUI version.
 
 ---
 
-## Auto Save（自動保存）
+## Supported Environment
 
-- `Auto` チェックが **ON** の場合  
-  - D&D すると即座に変換 → 自動保存  
-  - 保存名は自動生成されます  
-    - 形式：  
-      ```
-      <元ファイル名>_<shift>_<整形モード>[_d].mml
-      ```
-    - 例：`input_+5_fmt_rel_d.mml`
-
-- `Auto` チェックが **OFF** の場合  
-  - D&D 後に **Quick / Save** が有効になります
-
-### Quick（自動命名で保存）
-
-- 上記の自動生成ルールに従ったファイル名で即保存します。
-
-### Save（名前を付けて保存）
-
-- 保存ダイアログが開き、任意のファイル名で保存できます。
+- Windows 95 and later Win32 GUI environments  
+- Verified on Windows 95 (Virtual PC 2007), Windows 7, and Windows 10  
+  (compatibility mode not required)
 
 ---
 
-## オプション（GUI 版のチェックボックス）
+## Menu Structure (Alt Key)
 
-- `FMT` 整形あり（CUI の `-f` 相当）  
-  - OFF の場合は Pure（整形なし）  
-- `Rel` 相対音域（CUI の `-r` 相当）  
-- `Abs` 絶対音域（CUI の `-a` 相当）  
-  - Rel と Abs は排他  
-- `D-ch` D チャンネル移調（CUI の `-d` 相当）  
+Pressing **Alt** displays the application menu.  
+The menu hides automatically when focus is lost.
 
-※ Pure / FMT（整形方式）、Rel / Abs（音域方式）、D-ch（ノイズ移調）は  
-　それぞれ独立した設定です。
+### **File**
+- **Open** — Open an MML file  
+- **Exit** — Quit the application
 
----
-
-## 操作例
-
-1. Shift を +5 に設定  
-2. `FMT` と `Rel` を ON  
-3. `D-ch` も ON  
-4. `Auto` を ON  
-5. `input.mml` を D&D  
-→ `input_+5_fmt_rel_d.mml` が自動生成され保存されます
+### **Language**
+- **English**  
+- **Japanese** — Switches part of the UI and error messages to Japanese
 
 ---
 
-## 備考
+## Basic Operation
 
-- この GUI 版は CUI 版と同じエンジンを使用しています。  
-- 変換ロジックは CUI 版（mmltrc32）と同一です。  
-- UI の構成は `mmltrw32.rc` を参照してください。
+MMLTRW32 operates in the following sequence:
 
-このコードは全て Copilot を活用して作成しています。  
-予期せぬ不具合はご容赦ください。
+### **1. Set the transpose amount (Shift) using the slider**
+- Default is `0` (no transpose)  
+- The current value is shown next to **Key:**  
+
+### **2. Select options using checkboxes**
+- **FMT** — formatted output (Pure mode when OFF)  
+- **Rel** — relative octave mode  
+- **Abs** — absolute octave mode  
+- **D‑ch** — transpose D‑channel (noise channel included)
+
+**Rel** and **Abs** are mutually exclusive.  
+When both are OFF, octave notation (`oX` / `<>`) is automatically adjusted as needed.
+
+### **3. Drag & Drop an MML file onto the window**
+- If **Auto** is ON → automatic conversion and automatic save  
+- If **Auto** is OFF → **Quick** and **Save** buttons become available
+
+---
+
+## Auto Save
+
+### **Auto ON**
+Drag & Drop triggers immediate conversion and automatic saving.  
+The output filename is generated automatically:
+
+```
+<original>_<shift>_<mode>[_d].mml
+```
+
+Example:
+
+```
+input_+5_fmt_rel_d.mml
+```
+
+### **Auto OFF**
+After Drag & Drop, **Quick** and **Save** become available.
+
+---
+
+## Quick Save
+
+Saves the output immediately using the automatically generated filename.
+
+---
+
+## Save (Manual Save)
+
+Opens a save dialog and allows choosing any filename.
+
+---
+
+## GUI Options (Checkboxes)
+
+- **FMT** — formatted output (equivalent to CUI `-f`)  
+  - OFF = Pure mode (no formatting)  
+- **Rel** — relative octave mode (equivalent to CUI `-r`)  
+- **Abs** — absolute octave mode (equivalent to CUI `-a`)  
+  - Rel and Abs are mutually exclusive  
+- **D‑ch** — transpose D‑channel (equivalent to CUI `-d`)
+
+Pure/FMT, Rel/Abs, and D‑ch are independent settings.
+
+---
+
+## Example Workflow
+
+1. Set Shift to **+5**  
+2. Turn **FMT** and **Rel** ON  
+3. Turn **D‑ch** ON  
+4. Enable **Auto**  
+5. Drag & Drop `input.mml`  
+→ Output file `input_+5_fmt_rel_d.mml` is generated and saved automatically
+
+---
+
+## Notes
+
+- This GUI edition uses the same engine and conversion logic as the Win32 CUI version.  
+- UI layout is defined in `mmltrw32.rc`.
+
+All source code in this project was created with assistance from Copilot.  
+Unexpected issues may occur.
