@@ -1,5 +1,23 @@
 /* ============================================================
- * mmleng32.c  (C89/BCC55/DOS 8.3 準拠・安全強化完全修正版)
+ * mmleng32.c  (32-bit MML Transposer Engine)
+ *
+ * This is the 32-bit implementation of the Common MML Transposer Engine,
+ * shared by:
+ *      - mmltrw32  (Win32 GUI front-end)
+ *      - mmltrc32  (Win32 console front-end)
+ *
+ * Fully synchronized with the 16-bit engine design:
+ *      - Same public API (mml_process)
+ *      - Same mode bit layout (FMT / REL / ABS + D-channel extension)
+ *      - Same error code definitions
+ *      - Same MAX_CHANNELS = 28
+ *
+ * Note:
+ *   The 32-bit engine cannot be used in 16-bit environments.
+ *   Only the 16-bit engine is cross-version compatible
+ *   (DOS / Win16 / Win32 callers).
+ *
+ * C89 compliant / OpenWatcom V2 & BCC compatible.
  * ============================================================ */
 
 #include "mmleng32.h"
@@ -7,17 +25,15 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* ヘッダの定義 (MAX_CHANNELS=28) に完全同期 */
+/* Must match mmleng32.h (MAX_CHANNELS = 28) */
 #define MAX_LINES       4096
 
-/* 音名テーブル */
+/* Note names for 12 semitones */
 static const char* NOTE_NAMES[12] = {
     "c","c+","d","d+","e","f","f+","g","g+","a","a+","b"
 };
 
-/* ------------------------------------------------------------
- * 内部関数プロトタイプ (C89準拠)
- * ------------------------------------------------------------ */
+/* Internal function prototypes (C89 style) */
 static int  mml_parse(const char* text, Token* tokens, int max_tokens, int* p_line_count);
 static int  mml_transpose(Token* tokens, int count, int shift, int mode, MMLErrorInfo* err_info);
 static int  mml_render_common(Token* tokens, int count, char* outbuf, int outsize, int mode);
@@ -35,13 +51,11 @@ static void mml_mark_comment_lines(const char* buf, int* comment_flags);
 static void init_comment_flags(int* flags, int size);
 static int  is_line_head_channel(Token* tokens, int index, int count, int* p_ch_index, char* p_ch_char);
 
-/* ------------------------------------------------------------
- * 公開 API
- * ------------------------------------------------------------ */
+/* Public API */
 int mml_process(const char* in_text, int shift, int mode,
                 char* outbuf, int outsize, MMLErrorInfo* err_info)
 {
-    static Token tokens[MAX_TOKENS]; /* 非スレッドセーフ（仕様） */
+    static Token tokens[MAX_TOKENS]; /* Not thread-safe by design */
     int count;
     int outlen;
     int trans_res;
@@ -51,7 +65,7 @@ int mml_process(const char* in_text, int shift, int mode,
     memset(tokens, 0, sizeof(tokens));
     if (err_info) memset(err_info, 0, sizeof(MMLErrorInfo));
 
-    /* 基本セーフティガード */
+    /* Basic safety guards */
     if (!in_text || !outbuf) {
         if (err_info) err_info->error_code = MML_ERR_NULL_INPUT;
         return MML_ERR_NULL_INPUT;
@@ -69,28 +83,26 @@ int mml_process(const char* in_text, int shift, int mode,
         return MML_ERR_BAD_SHIFT;
     }
 
-    /* モードチェック（下位3bit） */
+    /* Mode check (lower 3 bits) */
     base_mode = mode & 7;
     if (base_mode < 0 || base_mode > 6) {
         if (err_info) err_info->error_code = MML_ERR_BAD_MODE;
         return MML_ERR_BAD_MODE;
     }
 
-    /* 1. パース */
+    /* 1. Parse */
     count = mml_parse(in_text, tokens, MAX_TOKENS, &dummy_line_count);
 
-    /* 2. 移調＋Smart Rewrite（2パス） */
+    /* 2. Transpose + Smart Rewrite (2-pass) */
     trans_res = mml_transpose(tokens, count, shift, mode, err_info);
     if (trans_res != 0) return trans_res;
 
-    /* 3. レンダリング */
+    /* 3. Render */
     outlen = mml_render_common(tokens, count, outbuf, outsize, mode);
     return outlen;
 }
 
-/* ------------------------------------------------------------
- * チャンネル判定
- * ------------------------------------------------------------ */
+/* Detect channel markers at line head */
 static int is_line_head_channel(Token* tokens, int index, int count,
                                 int* p_ch_index, char* p_ch_char)
 {
@@ -126,9 +138,7 @@ static int is_line_head_channel(Token* tokens, int index, int count,
     return 0;
 }
 
-/* ------------------------------------------------------------
- * 移調 & Smart Rewrite（第1パス）
- * ------------------------------------------------------------ */
+/* Transpose and Smart Rewrite (first pass) */
 static int mml_transpose(Token* tokens, int count, int shift,
                          int mode, MMLErrorInfo* err_info)
 {
@@ -144,19 +154,19 @@ static int mml_transpose(Token* tokens, int count, int shift,
     int first_note_global = 0;
 
     int is_smart_rewrite = ((mode & 3) == 0);
-    int is_noise_shift   = ((mode & 8) != 0);
+    int is_noise_shift   = ((mode & MODE_NOISE_SHIFT) != 0);
 
     for (i = 0; i < MAX_CHANNELS; i++) {
         last_oct_ch[i] = -999;
         first_note_ch[i] = 0;
     }
 
-    /* ---------- 第1パス：絶対オクターブ確定 ---------- */
+    /* First pass: determine absolute octaves */
     for (i = 0; i < count; i++) {
         Token* tk = &tokens[i];
         int ch_index;
 
-        /* 行番号更新 */
+        /* Update line number */
         if (tk->type == TK_RAW) {
             const char* rc = tk->raw;
             while (*rc) {
@@ -168,12 +178,12 @@ static int mml_transpose(Token* tokens, int count, int shift,
         if (is_line_head_channel(tokens, i, count, &ch_index, &current_ch_char))
             current_channel = ch_index;
 
-        /* RAW トークン処理 */
+        /* RAW token handling */
         if (tk->type == TK_RAW) {
 
             if (tk->is_comment) continue;
 
-            /* --- oX 処理（安全化版） --- */
+            /* Handle oX commands safely */
             if (tk->raw[0] == 'o') {
                 int n = 0, has_digit = 0;
                 const char* p2 = tk->raw + 1;
@@ -184,28 +194,28 @@ static int mml_transpose(Token* tokens, int count, int shift,
                     has_digit = 1;
                 }
 
-                /* Dch の oX */
+                /* D-channel oX */
                 if (current_channel == 3) {
                     cur_oct = 0;
 
                     if (has_digit) {
 
                         if (first_note_ch[3] == 0) {
-                            /* 最初の oX → 数字に関係なく o0 として扱う */
+                            /* First oX on D-ch ?? treat as o0 regardless of digit */
                             sprintf(tk->raw, "o0");
                             tk->is_literal_o0 = 1;
                             tk->is_raw_ox     = 1;
                             first_note_ch[3]  = 1;
 
                         } else {
-                            /* 次から（2回目以降）は全部そっと消す */
+                            /* From the second time on, silently remove all oX */
                             tk->raw[0]        = '\0';
                             tk->is_literal_o0 = 0;
                             tk->is_raw_ox     = 0;
                         }
 
                     } else {
-                        /* 数字のない o → 不正なので消す */
+                        /* 'o' without digit ?? invalid, remove */
                         tk->raw[0]        = '\0';
                         tk->is_literal_o0 = 0;
                         tk->is_raw_ox     = 0;
@@ -214,7 +224,7 @@ static int mml_transpose(Token* tokens, int count, int shift,
                     continue;
                 }
 
-                /* 通常チャンネル */
+                /* Normal channels */
                 if (has_digit) {
                     if (n < 0) n = 0;
                     if (n > 8) n = 8;
@@ -226,14 +236,14 @@ static int mml_transpose(Token* tokens, int count, int shift,
                 continue;
             }
 
-            /* --- < > 処理（安全化版） --- */
+            /* Handle < and > octave shifts safely */
             if (tk->raw[0] == '<' || tk->raw[0] == '>') {
                 int idx = 0;
 
                 while (tk->raw[idx] == '<') { cur_oct--; idx++; }
                 while (tk->raw[idx] == '>') { cur_oct++; idx++; }
 
-                /* cur_oct を安全範囲にクリップ */
+                /* Clip cur_oct to safe range */
                 if (cur_oct < 0) cur_oct = 0;
                 if (cur_oct > 8) cur_oct = 8;
 
@@ -250,12 +260,10 @@ static int mml_transpose(Token* tokens, int count, int shift,
             continue;
         }
 
-        /* ------------------------------------------------------------
-         * TK_NOTE 処理（第1パス：絶対オクターブ確定）
-         * ------------------------------------------------------------ */
+        /* TK_NOTE: determine absolute octave (first pass) */
         if (tk->type == TK_NOTE) {
 
-            /* --- Dチャンネル（常に octave=0） --- */
+            /* D-channel (always octave 0) */
             if (current_channel == 3) {
                 cur_oct = 0;
                 tk->octave = 0;
@@ -266,19 +274,16 @@ static int mml_transpose(Token* tokens, int count, int shift,
                     if (dst_note < 0) dst_note += 12;
                     tk->note = dst_note;
                 }
-                /* noise_shift OFF の場合は note をそのまま保持 */
             }
             else {
-                /* --- 通常チャンネルの移調計算（安全化） --- */
+                /* Normal channels transpose (safe) */
                 int num;
 
-                /* cur_oct の安全クリップ（0?8） */
                 if (cur_oct < 0) cur_oct = 0;
                 if (cur_oct > 8) cur_oct = 8;
 
                 num = cur_oct * 12 + tk->note + shift;
 
-                /* octave/note 分解 */
                 {
                     int dst_oct = num / 12;
                     int dst_note = num % 12;
@@ -288,7 +293,6 @@ static int mml_transpose(Token* tokens, int count, int shift,
                         dst_oct -= 1;
                     }
 
-                    /* オクターブ限界突破チェック */
                     if (dst_oct < 0 || dst_oct > 8) {
                         if (err_info) {
                             err_info->error_code = MML_ERR_OCTAVE_OUT_OF_RANGE;
@@ -304,19 +308,15 @@ static int mml_transpose(Token* tokens, int count, int shift,
                 }
             }
 
-            /* --------------------------------------------------------
-             * 初回ノート判定フラグ（Dch o0 補完仕様）
-             * -------------------------------------------------------- */
+            /* First-note flags (D-channel o0 completion rules) */
             if (current_channel >= 0 && current_channel < MAX_CHANNELS) {
 
                 if (current_channel == 3) {
-                    /* o0 を通過した場合（RAW 'o0' で is_literal_o0=1 が立つ） */
                     if (tk->is_literal_o0) {
-                        first_note_ch[3] = 1;   /* o0 がある → 補完不要 */
+                        first_note_ch[3] = 1;
                     }
-                    /* note が先に出た場合（o0 が無い） */
                     else if (!first_note_ch[3]) {
-                        first_note_ch[3] = 2;   /* 補完対象 */
+                        first_note_ch[3] = 2;
                     }
 
                     last_oct_ch[3] = 0;
@@ -337,9 +337,7 @@ static int mml_transpose(Token* tokens, int count, int shift,
         }
     }
 
-    /* ============================================================
-     * 【第2パス】Smart Rewrite による < > / oX の最適化再構築
-     * ============================================================ */
+    /* Second pass: Smart Rewrite for < > and oX reconstruction */
     if (is_smart_rewrite) {
         int prev_oct_global = last_oct_global;
         int prev_oct_ch[MAX_CHANNELS];
@@ -364,22 +362,18 @@ static int mml_transpose(Token* tokens, int count, int shift,
                      ? &prev_oct_ch[current_channel]
                      : &prev_oct_global;
 
-            /* コメントはそのまま */
+            /* Keep comments as-is */
             if (tk->type == TK_RAW && tk->is_comment) continue;
 
-            /* --------------------------------------------------------
-             * RAW 'oX' の再構築（Smart Rewrite）
-             * -------------------------------------------------------- */
+            /* Rebuild raw oX commands (Smart Rewrite) */
             if (tk->type == TK_RAW && tk->is_raw_ox) {
                 int base_oct = -999;
                 int j;
                 int ch_self = current_channel;
 
-                /* Dch + noise_shift OFF → 元の oX を壊さない */
                 if (current_channel == 3 && !is_noise_shift)
                     continue;
 
-                /* 次のノートを探して、その octave を oX にする */
                 for (j = i + 1; j < count; j++) {
                     int ch2;
                     if (is_line_head_channel(tokens, j, count, &ch2, NULL)) {
@@ -398,15 +392,12 @@ static int mml_transpose(Token* tokens, int count, int shift,
                 continue;
             }
 
-            /* --------------------------------------------------------
-             * NOTE の < > 再構築
-             * -------------------------------------------------------- */
+            /* Rebuild < and > octave shifts for notes */
             if (tk->type == TK_NOTE) {
                 int cur = tk->octave;
                 int diff = cur - *p_prev;
                 int j2;
 
-                /* Dch + noise_shift OFF → Smart Rewrite 無効 */
                 if (current_channel == 3 && !is_noise_shift) {
                     *p_prev = cur;
                     continue;
@@ -434,9 +425,7 @@ static int mml_transpose(Token* tokens, int count, int shift,
     return 0;
 }
 
-/* ------------------------------------------------------------
- * パーサ（行頭ヘッダ保護・コメント完全維持・安全強化版）
- * ------------------------------------------------------------ */
+/* Parser with header protection and full comment preservation */
 static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_line_count)
 {
     int count = 0;
@@ -445,9 +434,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
 
     while (*p != '\0' && count < max_tokens) {
 
-        /* --------------------------------------------------------
-         * 行頭 # ヘッダ行
-         * -------------------------------------------------------- */
+        /* Parse header lines starting with '#' */
         if (*p == '#') {
             Token* tk = &tokens[count];
             int len = 0;
@@ -467,10 +454,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * ブロックコメント
-         * （q[-2] を使わない安全版）
-         * -------------------------------------------------------- */
+        /* Parse block comments safely (no q[-2] access) */
         if (p[0] == '/' && p[1] == '*') {
             const char* q = p;
             char prev = 0, prev2 = 0;
@@ -482,16 +466,13 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
                 if (prev == '\n') current_line++;
                 append_comment_char(tokens, &count, prev);
 
-                // 終端 "*/" を検出
                 if (prev2 == '*' && prev == '/') break;
             }
             p = q;
             continue;
         }
 
-        /* --------------------------------------------------------
-        * 行コメント ; または // のような /
-        * -------------------------------------------------------- */
+        /* Parse line comments (';' or '/' like //) */
         if (*p == ';' || *p == '/') {
             const char* q = p;
 
@@ -504,9 +485,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * 空白・改行
-         * -------------------------------------------------------- */
+        /* Parse whitespace and newlines */
         if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
             Token* tk = &tokens[count];
             int len = 0;
@@ -536,9 +515,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * オクターブコマンド oX / < / >
-         * -------------------------------------------------------- */
+        /* Parse octave commands: oX, <, > */
         if (*p == '<' || *p == '>' || *p == 'o') {
             Token* tk = &tokens[count];
             int len = 0, n = 0, has_digit = 0;
@@ -556,7 +533,6 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
                 }
                 tk->raw[len] = '\0';
 
-                /* o0 のみ is_literal_o0、o1?は is_raw_ox */
                 if (has_digit) {
                     if (n == 0) tk->is_literal_o0 = 1;
                     else        tk->is_raw_ox = 1;
@@ -571,9 +547,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * 音色コマンド @ / @@
-         * -------------------------------------------------------- */
+        /* Parse tone commands '@' and '@@' */
         if (*p == '@') {
             Token* tk = &tokens[count];
             int len = 0;
@@ -601,9 +575,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * 裸の数字
-         * -------------------------------------------------------- */
+        /* Parse bare numbers */
         if (*p >= '0' && *p <= '9') {
             Token* tk = &tokens[count];
             int len = 0;
@@ -619,9 +591,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * タイ & ^
-         * -------------------------------------------------------- */
+        /* Parse tie '&' and '^' tokens */
         if (*p == '&' || *p == '^') {
             Token* tk = &tokens[count];
 
@@ -634,14 +604,12 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             continue;
         }
 
-        /* --------------------------------------------------------
-         * ノート・休符
-         * -------------------------------------------------------- */
+        /* Parse notes and rests */
         {
             int consumed = 0;
             int num = note_to_num(p, &consumed);
 
-            /* 休符 r */
+            /* Rest 'r' */
             if (*p == 'r') {
                 Token* tk = &tokens[count];
                 int len = 0;
@@ -659,7 +627,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
                 continue;
             }
 
-            /* ノート */
+            /* Note */
             if (num >= 0) {
                 Token* tk = &tokens[count];
                 int len = 0;
@@ -682,9 +650,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
             }
         }
 
-        /* --------------------------------------------------------
-         * 未定義文字
-         * -------------------------------------------------------- */
+        /* Handle undefined characters */
         {
             Token* tk = &tokens[count];
 
@@ -701,9 +667,7 @@ static int mml_parse(const char* text, Token* tokens, int max_tokens, int* p_lin
     return count;
 }
 
-/* ------------------------------------------------------------
- * レンダリング、コメント、整形ユーティリティ
- * ------------------------------------------------------------ */
+/* Rendering, comment handling, and formatting utilities */
 static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize, int mode)
 {
     int i, j, outpos = 0;
@@ -714,13 +678,12 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
     int global_first_note_done = 0;
     int global_last_oct = -999;
 
-    int is_fmt = (mode & 4) ? 1 : 0;
-    int is_rel = (mode & 2) ? 1 : 0;
-    int is_abs = (mode & 1) ? 1 : 0;
+    int is_fmt = (mode & MODE_FMT) ? 1 : 0;
+    int is_rel = (mode & MODE_PURE_REL) ? 1 : 0;
+    int is_abs = (mode & MODE_PURE_ABS) ? 1 : 0;
 
     int is_pure_layout = (!is_fmt && (is_rel || is_abs));
     int is_smart_rewrite = ((mode & 3) == 0);
-//    int is_noise_shift = ((mode & 8) != 0);
 
     memset(outbuf, 0, outsize);
 
@@ -736,9 +699,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
         if (is_line_head_channel(tokens, i, count, &ch_index, NULL))
             current_channel = ch_index;
 
-        /* --------------------------------------------------------
-         * NOTE 出力
-         * -------------------------------------------------------- */
+        /* Output NOTE tokens */
         if (tk->type == TK_NOTE) {
             int oct = tk->octave;
             const char* name = NOTE_NAMES[tk->note];
@@ -755,9 +716,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
                 p_last  = &global_last_oct;
             }
 
-            /* ----------------------------------------------------
-             * Dチャンネル専用：o0 補完ロジック
-             * ---------------------------------------------------- */
+            /* D-channel only: o0 completion logic */
             if (ch == 3) {
                 int already_has_o0 = 0;
                 int k;
@@ -798,9 +757,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
                 continue;
             }
 
-            /* ----------------------------------------------------
-             * 通常チャンネル（Smart Rewrite）
-             * ---------------------------------------------------- */
+            /* Normal channels (Smart Rewrite) */
             if (is_smart_rewrite) {
                 j = 0;
                 while (tk->raw[j] && outpos < outsize - 1)
@@ -817,9 +774,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
                 continue;
             }
 
-            /* ----------------------------------------------------
-             * 通常チャンネル（絶対/相対オクターブ）
-             * ---------------------------------------------------- */
+            /* Normal channels (absolute / relative octave) */
             need_prefix = 0;
 
             if (!(*p_first)) {
@@ -885,9 +840,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
             continue;
         }
 
-        /* --------------------------------------------------------
-         * REST / RAW
-         * -------------------------------------------------------- */
+        /* Output REST and RAW tokens */
         if (tk->type == TK_REST || tk->type == TK_RAW) {
             j = 0;
             while (tk->raw[j] && outpos < outsize - 1)
@@ -898,9 +851,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
 
     outbuf[outpos] = '\0';
 
-    /* ------------------------------------------------------------
-     * 整形モード（fmt）
-     * ------------------------------------------------------------ */
+    /* Formatting mode (FMT) */
     if (is_fmt) {
         mml_remove_blank_lines(outbuf);
         mml_trim_line_head_spaces(outbuf);
@@ -908,7 +859,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
         mml_compress_spaces(outbuf);
     }
 
-    /* CR → LF 統一 */
+    /* Normalize CR to LF */
     for (i = 0; outbuf[i]; i++) {
         if (outbuf[i] == '\r') outbuf[i] = '\n';
     }
@@ -916,9 +867,7 @@ static int mml_render_common(Token* tokens, int count, char* outbuf, int outsize
     return (int)strlen(outbuf);
 }
 
-/* ------------------------------------------------------------
- * コメント行マーキング
- * ------------------------------------------------------------ */
+/* Mark comment lines */
 static void mml_mark_comment_lines(const char* buf, int* comment_flags)
 {
     int in_block = 0, line = 0;
@@ -952,9 +901,7 @@ static void init_comment_flags(int* flags, int size)
     for (i = 0; i < size; i++) flags[i] = 0;
 }
 
-/* ------------------------------------------------------------
- * note_to_num
- * ------------------------------------------------------------ */
+/* Convert note text to numeric value */
 static int note_to_num(const char* s, int* consumed)
 {
     char c = s[0];
@@ -976,9 +923,7 @@ static int note_to_num(const char* s, int* consumed)
     return base;
 }
 
-/* ------------------------------------------------------------
- * CR/LF 正規化
- * ------------------------------------------------------------ */
+/* Normalize CR/LF sequences */
 static char get_normalized_char(const char** pp)
 {
     const char* p = *pp;
@@ -993,9 +938,7 @@ static char get_normalized_char(const char** pp)
     return c;
 }
 
-/* ------------------------------------------------------------
- * コメント文字追加（安全）
- * ------------------------------------------------------------ */
+/* Append a comment character safely */
 static void append_comment_char(Token* tokens, int* p_count, char ch)
 {
     Token* tk;
@@ -1026,9 +969,9 @@ static void append_comment_char(Token* tokens, int* p_count, char ch)
     }
 }
 
-/* ------------------------------------------------------------
- * 以下、整形ユーティリティ（元コードと同等）
- * ------------------------------------------------------------ */
+/* Formatting utilities */
+
+/* Remove redundant blank lines */
 static void mml_remove_blank_lines(char* buf)
 {
     char* src = buf;
@@ -1104,6 +1047,7 @@ static void mml_remove_blank_lines(char* buf)
     *dst = '\0';
 }
 
+/* Trim leading spaces */
 static void mml_trim_line_head_spaces(char* buf)
 {
     static char out[MAX_OUT];
@@ -1137,6 +1081,7 @@ static void mml_trim_line_head_spaces(char* buf)
     strcpy(buf, out);
 }
 
+/* Insert section breaks */
 static void mml_insert_section_breaks(char* buf)
 {
     static char out[MAX_OUT];
@@ -1208,6 +1153,7 @@ static void mml_insert_section_breaks(char* buf)
     strcpy(buf, out);
 }
 
+/* Compress spaces */
 static void mml_compress_spaces(char* buf)
 {
     int r = 0, w = 0, space = 0, line = 0;
